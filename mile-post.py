@@ -1,7 +1,7 @@
 import streamlit as st
 import geopandas as gpd
-import zipfile
-from io import BytesIO
+import tempfile
+import os
 
 st.title("Florida Roadway Translator")
 
@@ -9,33 +9,35 @@ uploaded_file = st.file_uploader("Upload ZIP (containing .shp, .shx, .dbf, .prj)
 
 if uploaded_file is not None:
     try:
-        # 1. Open the zip in memory to find the .shp filename
-        with zipfile.ZipFile(uploaded_file) as z:
-            # Look for the filename ending in .shp
-            shp_filenames = [f for f in z.namelist() if f.endswith('.shp')]
-            
-            if not shp_filenames:
-                st.error("Could not find a .shp file inside the ZIP.")
-            else:
-                # 2. Pick the first .shp found
-                target_shp = shp_filenames[0]
-                
-                # 3. Use the 'zip://' prefix with the uploaded file 
-                # and point it specifically to the internal .shp
-                # We reset the pointer to the start of the uploaded file first
-                uploaded_file.seek(0)
-                gdf = gpd.read_file(uploaded_file, engine="pyogrio", layer=target_shp.replace('.shp', ''))
+        # 1. Create a temporary file to hold the uploaded ZIP
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+            tmp.write(uploaded_file.getvalue())
+            tmp_path = tmp.name
 
-                # 4. Standardize to Lat/Long
-                if gdf.crs is not None:
-                    gdf = gdf.to_crs(epsg=4326)
-                    st.success(f"Successfully translated {target_shp}")
-                
-                st.write("Data Preview:", gdf.head())
+        # 2. Use Geopandas to read the temporary file
+        # The 'zip://' prefix is the standard way to read zipped shapes
+        gdf = gpd.read_file(f"zip://{tmp_path}")
 
-                # 5. Download Button
-                geojson = gdf.to_json()
-                st.download_button("Download GeoJSON", geojson, "roadway_data.geojson", "application/json")
+        # 3. Clean up: Delete the temporary file now that it's in memory
+        os.remove(tmp_path)
+
+        # 4. Standardize to Lat/Long (WGS84)
+        if gdf.crs is not None:
+            gdf = gdf.to_crs(epsg=4326)
+            st.success("Successfully loaded and translated data!")
+        
+        # Display Audit Info
+        st.write(f"**Feature Count:** {len(gdf)}")
+        st.write("**Attribute Preview:**", gdf.head())
+
+        # 5. Export for Mappy App
+        geojson = gdf.to_json()
+        st.download_button(
+            label="Download GeoJSON",
+            data=geojson,
+            file_name="translated_roadway.geojson",
+            mime="application/json"
+        )
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Translation Error: {e}")
