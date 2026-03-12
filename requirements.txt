@@ -1,6 +1,5 @@
 streamlit
 geopandas
-fiona
 pyogrio
 pyproj
 shapely
